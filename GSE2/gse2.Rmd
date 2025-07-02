@@ -1,0 +1,187 @@
+---
+title: "Untitled"
+author: "Gabriel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r}
+library(AnnotationDbi)
+library(dendextend)
+library(EnhancedVolcano)
+library(FactoMineR); library(factoextra)
+library(hgu219.db)
+library(GEOquery)
+library(limma)
+library(oligo)
+library(pheatmap)
+library(sva)
+library(tidyverse)
+library(affycoretools)
+```
+
+
+```{r}
+id <- 'GSE69644'
+gse <- getGEO(id)
+gse <- gse[[1]]
+
+pdata <- pData(gse)
+#Download dos dados suplementares, arquivos .cel
+filePaths <- getGEOSuppFiles(id)
+pdata['cel_file'] <- str_split(pdata$supplementary_file,"/") %>% map_chr(tail,1) #Criar nova coluna (cel_file) contendo o nome do arquivo de cada leitura. Importante para manter a ordem das leituras ao importar os dados de leitura
+
+#extrair arquivos na pasta
+untar('GSE69644/GSE69644_RAW.tar', exdir = 'GSE69644/')
+##Importar com a ordem correta, garantindo que as leituras estao mapeadas para as amostras certas
+gse_celdata <-  read.celfiles(paste0(id,'/',pdata$cel_file),phenoData=phenoData(gse))
+```
+
+```{r}
+exp <- exprs(gse_celdata)
+colnames(exp) == pdata$geo_accession #conferir ordem
+
+eset <- oligo::rma(gse_celdata)
+eset <- annotateEset(eset, hgu219.db, columns=c('PROBEID', 'ENTREZID', 'SYMBOL', 'GENENAME'))
+fData(eset) %>% View()
+
+oligo::hist(eset) #normalizado
+oligo::hist(gse_celdata)
+```
+
+#annotation
+```{r}
+fdata <- fData(eset)
+colnames(fdata)
+
+anno <- subset(fdata, !is.na(GENENAME))
+anno_grouped <- group_by(anno, PROBEID)
+anno_summarized <- dplyr::summarize(anno_grouped, n_of_matches = n_distinct(GENENAME))
+anno_filtered <- filter(anno_summarized, n_of_matches > 1)
+dim(anno_filtered)
+#Nenhum probe com leitura duplicada, provavelmente devido o metodo de anotacao do affycoretools
+
+eset <- subset(eset, !grepl("pseudogene", fData(eset)$GENENAME))
+eset <- subset(eset, !grepl("---", fData(eset)$`Gene Title`))
+fData(eset) %>% View()
+```
+
+
+```{r}
+exp.eset <- exprs(eset)
+gse_medians <- rowMedians(exp.eset)
+
+man_cutoff <- 2.8
+
+hist(gse_medians, 100, col = "cornsilk1", freq = FALSE,
+     main = "Histogram of the median intensities",
+     border = "antiquewhite4",
+     xlab = "Median intensities")
+abline(v=man_cutoff)
+
+man_threshold <- apply(exp.eset, 1, function(x){
+  sum(x > man_cutoff) >= 2})
+table(man_threshold)
+
+eset.filtered <- subset(eset, man_threshold)
+exp.eset <- exprs(eset.filtered)
+```
+
+```{r}
+pca <- PCA(t(exp.eset), graph = F)
+pdf('../Figuras/PCA_6-24.pdf', width = 4, height =3)
+fviz_pca_ind(pca, title='',
+             geom.ind="point", pointshape=21, pointsize=4,
+             mean.point=F,
+             fill.ind=pdata$`treatment:ch1`, 
+             legend.title="Cell treatment")+
+  theme_classic()+
+  scale_fill_manual(values=c('deepskyblue', 'violetred', 'grey'))+
+  scale_color_manual(values=c('deepskyblue', 'violetred', 'grey'))
+dev.off()
+
+ann <- dplyr::select(pdata, `treatment:ch1`) %>% dplyr::rename('Cell treatment' = 1)
+pheatmap(exp.eset,
+         border_color=NA,
+         scale="row",
+         cluster_rows = F, # nao esta funcionando clusterizar
+         color=colorRampPalette(c('#175290','#55a1fa', 'white','#fe0131', 'darkred'))(100),
+         show_rownames=F,
+         show_colnames = F, 
+         annotation_col = ann,
+         annotation_colors = list(`Cell treatment` = c(`cisplatin for 24h` = 'deepskyblue', `cisplatin for 6h` = 'violetred', control = 'black')))
+#testar heatmap com top100 degs
+```
+
+#DEG
+```{r}
+design <- model.matrix(~ 0 + pdata$`treatment:ch1`)
+design
+colnames(design) <- levels(as.factor(c('cis24', 'cis6', 'control')))
+contrast_matrix <- makeContrasts(cis24 - control, 
+                                 cis6 - control,
+                                 cis24 - cis6,
+                                 levels=design)
+contrast_matrix
+
+fit <- lmFit(eset.filtered, design)
+fit2 <- contrasts.fit(fit, contrasts = contrast_matrix)
+fit2 <- eBayes(fit2)
+fitted.ebayes <- eBayes(fit)
+res <- topTable(fit2, n=Inf)
+res.sig <- res %>% filter(adj.P.Val < 0.05)
+summary(decideTests(fit2,lfc=1, adjust.method = "fdr", p.value = 0.05))
+
+topTable(fit2, coef = 1, n=Inf) %>% writexl::write_xlsx('cis24_control.xlsx')
+topTable(fit2, coef = 2, n=Inf) %>% writexl::write_xlsx('cis6_control.xlsx')
+```
+
+```{r}
+top.genes <- dplyr::arrange(res.sig, dplyr::desc(abs(res.sig$cis24...control))) %>% top_n(n=-5000)
+
+pdf('../Figuras/Heatmap DEGs.pdf', width = 5, height = 8)
+pheatmap(exp.eset %>% 
+           as.data.frame() %>%
+           rownames_to_column(var='probeid') %>% 
+           filter(probeid %in% filter(res, abs(cis24...control) > 0.5)$PROBEID) %>% 
+           #filter(probeid %in% top.genes$PROBEID) %>% 
+           column_to_rownames(var='probeid'),
+         border_color=NA,
+         scale="row",
+         cluster_rows = T, # nao esta funcionando clusterizar
+         treeheight_row = 0,
+         color=colorRampPalette(c('#175290','#55a1fa', 'white','#fe0131', 'darkred'))(100),
+         show_rownames=F,
+         show_colnames = F,
+         annotation_col = ann,
+         annotation_colors = list(`Cell treatment` = c(`cisplatin for 24h` = 'deepskyblue', `cisplatin for 6h` = 'violetred', control = 'grey')))
+dev.off()
+```
+
+```{r}
+pdf('../Figuras/Volcano-cis6.pdf', width = 4, height = 4)
+EnhancedVolcano(res, x = "cis6...control", y = "P.Value",
+                lab = res$SYMBOL, labSize = 3,
+                title = "Cisplatin 6h vs Control", subtitle = NULL, caption = NULL,
+                pCutoffCol = "adj.P.Val", pCutoff = 0.05, FCcutoff = 0.5,
+                col=c('grey', 'grey', 'lightgrey', 'violetred'),
+                legendLabels = NULL, legendIconSize = 0)+
+  theme_classic()+
+  theme(legend.position = 'top',
+        legend.title = element_blank())+
+  coord_cartesian(xlim=c(-4,4), ylim=c(0,12))
+dev.off()
+
+pdf('../Figuras/Volcano-cis24.pdf', width = 4, height = 4)
+EnhancedVolcano(res, x = "cis24...control", y = "P.Value",
+                lab = res$SYMBOL, labSize=3,
+                title = "Cisplatin 24h vs Control", subtitle = NULL, caption = NULL,
+                pCutoffCol = "adj.P.Val", pCutoff = 0.05, FCcutoff = 0.5,
+                col=c('grey', 'grey', 'lightgrey', 'deepskyblue'),
+                legendLabels = NULL, legendIconSize = 0)+
+  theme_classic()+
+  theme(legend.position = 'top',
+        legend.title = element_blank())+
+  coord_cartesian(ylim = c(0,12))
+dev.off()
+```
+

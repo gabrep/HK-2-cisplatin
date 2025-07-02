@@ -1,0 +1,112 @@
+---
+title: "hk2 cisplatina"
+author: "Gabriel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(limma)
+library(edgeR)
+
+#
+library(EnhancedVolcano)
+library(pheatmap)
+library(dendextend)
+library(GEOquery)
+
+library(factoextra); library(FactoMineR)
+```
+
+
+```{r}
+id <- 'GSE227970'
+geo <- getGEO(id)
+
+gse <- geo[[1]]
+pdata <- pData(gse)
+
+#======selecionar amostras de interesse=====
+pdata <- pdata %>% filter(`treatment:ch1` %in% c('H2O', 'Cisplatin'))
+
+#=========carregar counts========
+rnaseq <- getGEOSuppFiles(id)
+rnaseq  <- read.delim('GSE227970/GSE227970_gene_count.txt.gz')
+
+#==========conferir anotação=========
+rnaseq.genes <- data.frame(rnaseq$gene_id, rnaseq$gene_description)
+
+library(org.Hs.eg.db)
+genes <- AnnotationDbi::select(org.Hs.eg.db, keys = rnaseq.genes$rnaseq.gene_id, keytype = 'ENSEMBL', columns = c("ENTREZID", "SYMBOL"))
+
+genes <- genes[!duplicated(genes$ENSEMBL),]
+rnaseq.genes <- left_join(rnaseq.genes, genes, by=c("rnaseq.gene_id" = 'ENSEMBL'))
+
+
+#==============mudar pdata$description para ficar igual as colunas do rnaseq
+pdata <- pdata %>% mutate(sample = pdata$description %>% tolower() %>% gsub(' ', '', .))
+rnaseq <- rnaseq[,pdata$sample]
+```
+
+```{r}
+dge <- DGEList(rnaseq)
+dge$samples$group <- pdata$`treatment:ch1`
+dge$genes <- genes
+
+cpm <- cpm(dge)
+lcpm <- cpm(dge, log=T)
+
+dge$samples
+
+```
+
+#low expressed
+```{r}
+dge <- dge[!is.na(dge$genes$ENTREZID),]
+
+keep.exprs <- filterByExpr(dge, group = dge$samples$group)
+
+dge.filter <- dge[keep.exprs, keep.lib.sizes=F]
+```
+
+#NORM
+```{r}
+dge.filter <- calcNormFactors(dge.filter, method = 'TMM')
+
+plotMDS(cpm(dge.filter, log=T))
+
+```
+
+#clusterização
+```{r}
+pca <- PCA(t(cpm(dge.filter, log=F)), graph = F)
+
+fviz_pca_ind(pca,
+             mean.point=F, 
+             geom.ind='point', pointshape=21,
+             fill.ind=pdata$`treatment:ch1`,
+             addEllipses = T, ellipse.type='confidence')
+```
+
+```{r}
+design.rnaseq <- model.matrix(~ 0 + dge$samples$group)
+colnames(design.rnaseq) <- c("Cisplatin", "Control")
+contrasts.rnaseq <- makeContrasts(Cisplatin - Control, levels = colnames(design.rnaseq))
+
+v <- voom(dge.filter, design = design.rnaseq, plot=T)
+
+vfit <- lmFit(v, design.rnaseq)
+vfit <- contrasts.fit(vfit, contrasts=contrasts.rnaseq)
+efit <- eBayes(vfit)
+plotSA(efit)
+
+summary(decideTests(efit, p.value = 0.05, lfc = 1.5))
+
+topTable(efit, number=Inf) %>% 
+  filter(adj.P.Val < .05, abs(logFC) > 1.5) %>% 
+  View()
+
+topTable(efit, number = Inf) %>% writexl::write_xlsx('hk2_cis48.xlsx')
+```
+

@@ -1,0 +1,217 @@
+---
+title: "tempos juntos"
+author: "Gabriel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(clusterProfiler)
+library(BioVenn)
+library(msigdbr)
+library(org.Hs.eg.db)
+library(GOplot)
+```
+
+#Dados
+```{r}
+cis48 <- readxl::read_excel('../../GSE1/hk2_cis48.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+cis6 <- readxl::read_excel('../../gse2/cis6_control.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+cis24 <- readxl::read_excel('../../gse2/cis24_control.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+
+#remover ENTREZID duplicados, mantendo apenas o valor mais extremo (maior valor para positivos, menor valor para negativos)
+cis6 <- cis6[order(abs(cis6$logFC), decreasing=T),]
+cis6 <- cis6[!duplicated(cis6$ENTREZID),] %>% na.omit()
+
+cis24 <- cis24[order(abs(cis24$logFC), decreasing=T),]
+cis24 <- cis24[!duplicated(cis24$ENTREZID),] %>% na.omit()
+
+cis48 <- cis48[order(abs(cis48$logFC), decreasing=T),]
+cis48 <- cis48[!duplicated(cis48$ENTREZID),] %>% na.omit()
+
+look.for <- c('nfkb', 'il1b', 'cit c', 'casp8', 'p-mtor', 'p-akt', 'lc3', 'pink1', 'sod1', 'bcl2', 'nox4', 'nrf2', 'nfkb')
+```
+
+
+```{r}
+cutoff <- 0.5
+venn <- BioVenn::draw.venn(list_x = filter(cis6, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL,
+                   list_y = filter(cis24, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL, 
+                   list_z = filter(cis48, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL)
+#data.frame(cis='6+24', genes=venn$xy) %>% View()
+```
+
+#6+24+48
+```{r}
+#----DOWN----
+cis6.down <- cis6 %>% filter(SYMBOL %in% venn$xyz, logFC < -cutoff, adj.P.Val < 0.05)
+cis24.down <- cis24 %>% filter(SYMBOL %in% venn$xyz, logFC < -cutoff, adj.P.Val < 0.05)
+cis48.down <- cis48 %>% filter(SYMBOL %in% venn$xyz, logFC < -cutoff, adj.P.Val < 0.05)
+#recuperar apenas intersecção de genes
+venn.down <- BioVenn::draw.venn(list_x = cis6.down$SYMBOL, xtitle = '6h',
+                                list_y = cis24.down$SYMBOL, ytitle = '24h',
+                                list_z = cis48.down$SYMBOL, ztitle = '48h')
+#manter apenas genes presentes em ambos
+cis6.down <- cis6.down %>% filter(SYMBOL %in% venn.down$xyz)
+cis24.down <- cis24.down %>% filter(SYMBOL %in% venn.down$xyz)
+cis48.down <- cis48.down %>% filter(SYMBOL %in% venn.down$xyz)
+
+#----UP----
+cis6.up <- cis6 %>% filter(SYMBOL %in% venn$xyz, logFC > cutoff, adj.P.Val < 0.05)
+cis24.up <- cis24 %>% filter(SYMBOL %in% venn$xyz, logFC > cutoff, adj.P.Val < 0.05)
+cis48.up <- cis48 %>% filter(SYMBOL %in% venn$xyz, logFC > cutoff, adj.P.Val < 0.05)
+#recuperar apenas intersecção de genes
+venn.up <- BioVenn::draw.venn(list_x = cis6.up$SYMBOL, xtitle = '6h',
+                                list_y = cis24.up$SYMBOL, ytitle = '24h',
+                                list_z = cis48.up$SYMBOL, ztitle = '48h')
+#manter apenas genes presentes em ambos
+cis6.up <- cis6.up %>% filter(SYMBOL %in% venn.up$xyz)
+cis24.up <- cis24.up %>% filter(SYMBOL %in% venn.up$xyz)
+cis48.up <- cis48.up %>% filter(SYMBOL %in% venn.up$xyz)
+
+cis.down <- cis6.down$SYMBOL
+cis.up <- cis6.up$SYMBOL
+```
+
+##GO
+```{r}
+go.cis.up <- enrichGO(cis.up, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis.up <- go.cis.up@result
+go.cis.up <- go.cis.up %>% mutate(go_reg = 'up')
+
+
+go.cis.down <- enrichGO(cis.down, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis.down <- go.cis.down@result
+go.cis.down <- go.cis.down %>% mutate(go_reg = 'down')
+
+up.terms <- c('macroautophagy', 'apoptotic mitochondrial changes', 'regulation of apoptotic signaling pathway', 'response to oxidative stress', '	
+cellular response to oxidative stress', 'autophagosome assembly', 'regulation of macroautophagy', 'autophagy of mitochondrion', 'regulation of ferroptosis', 'positive regulation of extrinsic apoptotic signaling pathway via death domain receptors')
+
+down.terms <- c('extrinsic apoptotic signaling pathway', 'regulation of apoptotic signaling pathway', 'canonical NF-kappaB signal transduction', 'cellular response to oxidative stress', 'ERK1 and ERK2 cascade', 'positive regulation of TOR signaling', 'TOR signaling')
+```
+
+```{r}
+rbind(go.cis.up, go.cis.down) %>% 
+  filter(Description %in% c(down.terms, up.terms)) %>% 
+  ggplot(aes(go_reg, reorder(Description, -RichFactor), fill=FoldEnrichment))+
+  geom_tile(color='black')+
+  scale_fill_gradient2(high='navy', mid='white', low='brown2')
+```
+
+
+#6+24
+
+```{r}
+#----DOWN----
+cis6.down <- cis6 %>% filter(SYMBOL %in% venn$xy, logFC < -cutoff, adj.P.Val < 0.05)
+cis24.down <- cis24 %>% filter(SYMBOL %in% venn$xy, logFC < -cutoff, adj.P.Val < 0.05)
+#recuperar apenas intersecção de genes
+venn.down <- BioVenn::draw.venn(list_x = cis6.down$SYMBOL, xtitle = '6h',
+                                list_y = cis24.down$SYMBOL, ytitle = '24h',
+                                list_z = NULL)
+#manter apenas genes presentes em ambos
+cis6.down <- cis6.down %>% filter(SYMBOL %in% venn.down$xy)
+cis24.down <- cis24.down %>% filter(SYMBOL %in% venn.down$xy)
+
+
+#----UP----
+cis6.up <- cis6 %>% filter(SYMBOL %in% venn$xy, logFC > cutoff, adj.P.Val < 0.05)
+cis24.up <- cis24 %>% filter(SYMBOL %in% venn$xy, logFC > cutoff, adj.P.Val < 0.05)
+
+#recuperar apenas intersecção de genes
+venn.up <- BioVenn::draw.venn(list_x = cis6.up$SYMBOL, xtitle = '6h',
+                                list_y = cis24.up$SYMBOL, ytitle = '24h',
+                                list_z = NULL)
+#manter apenas genes presentes em ambos
+cis6.up <- cis6.up %>% filter(SYMBOL %in% venn.up$xy)
+cis24.up <- cis24.up %>% filter(SYMBOL %in% venn.up$xy)
+
+cis.down <- cis6.down$SYMBOL
+cis.up <- cis6.up$SYMBOL
+```
+
+##GO
+```{r}
+go.cis.up <- enrichGO(cis.up, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.up <- go.cis.up
+go.cis.up <- go.cis.up@result
+go.cis.up <- go.cis.up %>% mutate(go_reg = 'up')
+
+
+go.cis.down <- enrichGO(cis.down, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.down <- go.cis.down
+go.cis.down <- go.cis.down@result
+go.cis.down <- go.cis.down %>% mutate(go_reg = 'down')
+
+up.terms <- c('macroautophagy', 'autophagosome assembly',
+'apoptotic mitochondrial changes','autophagy of mitochondrion',
+'positive regulation of extrinsic apoptotic signaling pathway via death domain receptors',
+'regulation of ferroptosis')
+
+down.terms <- c('extrinsic apoptotic signaling pathway', 'regulation of apoptotic signaling pathway', 'canonical NF-kappaB signal transduction', 'ERK1 and ERK2 cascade', 'positive regulation of TOR signaling', 'TOR signaling', 'regulation of cysteine-type endopeptidase activity involved in apoptotic process')
+```
+
+```{r}
+pdf('../../Figuras/Selected GO.pdf', width = 8, height = 6)
+rbind(go.cis.up, go.cis.down) %>% 
+  filter(Description %in% c(down.terms, up.terms)) %>% 
+  ggplot(aes(go_reg, reorder(Description, -FoldEnrichment), fill=FoldEnrichment))+
+  geom_tile(color='white')+
+  geom_text(aes(label=round(FoldEnrichment,2)), color='white')+
+  labs(x=NULL, y='Selected GO terms')+
+  scale_fill_gradient(high='navy', low='cyan3')+
+  theme_classic()+
+  theme(axis.text = element_text(size=10, color='black'))
+dev.off()
+```
+
+```{r}
+autophagy.terms <- c('macroautophagy', 'autophagosome assembly',
+'apoptotic mitochondrial changes','autophagy of mitochondrion')
+geneList <- setNames(cis6.up$logFC, cis6.up$SYMBOL)
+
+pdf('../../Figuras/Heatplot-termsGenes.pdf', width = 10, height = 2.5)
+enrichplot::heatplot(go.up[go.up$Description %in% autophagy.terms, asis=T],
+                     foldChange=geneList)+
+  scale_fill_gradient(low='cyan3', high='navy')+
+  theme_minimal()+
+  theme(axis.text.x = element_text(size=7),
+        axis.text.y = element_text(size=10))+
+  ggpubr::rotate_x_text(angle=90)
+dev.off()
+
+
+enrichplot::dotplot(go.up, showCategory = 10)
+enrichplot::dotplot(go.down, showCategory = 5)
+
+
+look.for
+genes.go <- go.cis.up %>% filter(Description %in% autophagy.terms)
+
+```
+
+```{r}
+BioVenn::draw.venn(list_x = filter(cis6, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL, xtitle = '     cis 6h\n\n\n\n\n\n\n\n\n\n\n', x_c = 'violetred',
+                   list_y = filter(cis24, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL, ytitle = '\n\n\n\n\n\n\n\n\ncis 24h', y_c = 'deepskyblue',
+                   list_z = NULL, title = 'DEGs Cisplatin 6h/24h \nvs Control', subtitle = NULL,
+                   output = 'pdf', filename = '../../Figuras/Venn-6-24.pdf',
+                   width = 550, height = 550)
+```
+
+```{r}
+pdf('../../Figuras/deg counts.pdf', width = 2.5, height = 3)
+rbind(cis24.down, cis24.up) %>%
+  mutate(go_reg = ifelse(logFC > 0, 'Up', 'Down')) %>% 
+  ggplot(aes(factor(go_reg), fill=go_reg))+
+  geom_bar(color='black', width =.75)+
+  stat_count(geom = "text", colour = c('black', 'white'), size = 4, aes(label = ..count..), vjust=1.5)+
+  scale_fill_manual(values=c('white', 'navy'), guide='none')+
+  labs(x=NULL, y=NULL, title='Common Down/Up DEGs')+
+  theme_classic()+
+  coord_cartesian(xlim=c(0.5, 2.5), expand = F, ylim=c(0, 2150))+
+  theme(axis.text = element_text(color='black', size=12),
+        title = element_text(size=10))
+dev.off()
+```
+

@@ -1,0 +1,245 @@
+---
+title: "Untitled"
+author: "Gabriel"
+date: "`r Sys.Date()`"
+output: html_document
+---
+```{r}
+library(tidyverse)
+library(clusterProfiler)
+library(BioVenn)
+library(msigdbr)
+```
+
+#Dados
+```{r}
+cis48 <- readxl::read_excel('../../GSE1/hk2_cis48.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+cis6 <- readxl::read_excel('../../gse2/cis6_control.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+cis24 <- readxl::read_excel('../../gse2/cis24_control.xlsx') %>% dplyr::select(SYMBOL, ENTREZID, logFC, adj.P.Val)
+
+look.for <- c('nfkb', 'il1b', 'cit c', 'casp8', 'p-mtor', 'p-akt', 'lc3', 'pink1', 'sod1', 'bcl2', 'nox4', 'nrf2', 'nfkb')
+```
+
+#Venn
+```{r}
+cutoff <- 1
+BioVenn::draw.venn(list_x = filter(cis6, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL,
+                   list_y = filter(cis24, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL, 
+                   list_z = filter(cis48, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL)
+```
+
+#wrangling
+##limpeza
+```{r}
+#remover ENTREZID duplicados, mantendo apenas o valor mais extremo (maior valor para positivos, menor valor para negativos)
+cis6 <- cis6[order(abs(cis6$logFC), decreasing=T),]
+cis6 <- cis6[!duplicated(cis6$ENTREZID),] %>% na.omit()
+
+cis24 <- cis24[order(abs(cis24$logFC), decreasing=T),]
+cis24 <- cis24[!duplicated(cis24$ENTREZID),] %>% na.omit()
+
+cis48 <- cis48[order(abs(cis48$logFC), decreasing=T),]
+cis48 <- cis48[!duplicated(cis48$ENTREZID),] %>% na.omit()
+```
+
+##ranks/gsea
+```{r}
+#criar ranks para GSEA
+ranks.cis6 <- cis6[order(cis6$logFC, decreasing = T),]$logFC
+names(ranks.cis6) <- cis6[order(cis6$logFC, decreasing = T),]$SYMBOL
+ranks.cis6
+
+ranks.cis24 <- cis24[order(cis24$logFC, decreasing = T),]$logFC
+names(ranks.cis24) <- cis24[order(cis24$logFC, decreasing = T),]$SYMBOL
+ranks.cis24
+
+ranks.cis48 <- cis48[order(cis48$logFC, decreasing = T),]$logFC
+names(ranks.cis48) <- cis48[order(cis48$logFC, decreasing = T),]$SYMBOL
+ranks.cis48
+
+#TERM2GENES
+msigdbr::msigdbr_collections() %>% print(n=Inf)
+H <- msigdbr::msigdbr(species = "Homo sapiens", category = "H")
+H.symbol <- dplyr::select(H, gs_name, gene_symbol)
+
+CPs <- rbind(
+   msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:KEGG"),
+   msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:REACTOME"),
+   msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:WIKIPATHWAYS"))
+CPs.symbol <- dplyr::select(CPs, gs_name, gene_symbol)
+
+TFT <- msigdbr::msigdbr(species = "Homo sapiens", category = "C3", subcategory = "TFT:GTRD")
+TFT.symbol <- dplyr::select(TFT, gs_name, gene_symbol)
+
+RA <- msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:REACTOME")
+RA.symbol <- dplyr::select(RA, gs_name, gene_symbol)
+
+GO <- msigdbr::msigdbr(species = "Homo sapiens", category = "C5", subcategory = "GO:BP")
+GO.symbol <- dplyr::select(GO, gs_name, gene_symbol)
+```
+
+#GSEA
+##Hallmakrs
+```{r}
+gsea.cis6 <- GSEA(ranks.cis6, TERM2GENE = H.symbol)
+gsea.cis6 <- gsea.cis6@result
+
+gsea.cis24 <- GSEA(ranks.cis24, TERM2GENE = H.symbol)
+gsea.cis24 <- gsea.cis24@result
+
+gsea.cis48 <- GSEA(ranks.cis48, TERM2GENE = H.symbol)
+gsea.cis48 <- gsea.cis48@result
+
+gsea.cis6 <- gsea.cis6 %>% mutate(cis=6)
+gsea.cis24 <- gsea.cis24 %>% mutate(cis=24)
+gsea.cis48 <- gsea.cis48 %>% mutate(cis=48)
+
+venn.gsea <- BioVenn::draw.venn(list_x = gsea.cis6$Description,
+                   list_y = gsea.cis24$Description,
+                   list_z = gsea.cis48$Description)
+venn.gsea$xy
+gsea.list <- c('HALLMARK_TNFA_SIGNALING_VIA_NFKB',
+               'HALLMARK_APOPTOSIS',
+               'HALLMARK_P53_PATHWAY',
+               'HALLMARK_TNFA_SIGNALING_VIA_NFKB',
+               'HALLMARK_MTORC1_SIGNALING',
+               'HALLMARK_P53_PATHWAY',
+               'HALLMARK_G2M_CHECKPOINT',
+               'HALLMARK_DNA_REPAIR'
+               )
+rbind(gsea.cis6, gsea.cis24, gsea.cis48) %>% 
+  filter(Description %in% gsea.list) %>% 
+  ggplot(aes(factor(cis), reorder(Description, -NES), fill=NES))+
+  geom_tile(color='black')+
+  scale_fill_gradient2(low = 'yellow',mid = 'white', high = 'blue')
+
+gseaplot()
+```
+
+##CPs
+```{r}
+cps.cis6 <- GSEA(ranks.cis6, TERM2GENE = CPs.symbol)
+cps.cis6 <- cps.cis6@result
+
+cps.cis24 <- GSEA(ranks.cis24, TERM2GENE = CPs.symbol)
+cps.cis24 <- cps.cis24@result
+
+cps.cis48 <- GSEA(ranks.cis48, TERM2GENE = CPs.symbol)
+cps.cis48 <- cps.cis48@result
+
+venn.cps <- BioVenn::draw.venn(list_x = cps.cis6$Description, xtitle = '6h',
+                   list_y = cps.cis24$Description, ytitle = '24h',
+                   list_z = cps.cis48$Description, ztitle = '48h')
+
+
+cps.cis6 <- cps.cis6 %>% mutate(orig = ifelse(startsWith(cps.cis6$Description, 'KEGG'), 'Kegg', ifelse(startsWith(cps.cis6$Description, 'REACTOME'), 'Reactome', 'Wiki Pathways')), cis=6)
+cps.cis24 <- cps.cis24 %>% mutate(orig = ifelse(startsWith(cps.cis24$Description, 'KEGG'), 'Kegg', ifelse(startsWith(cps.cis24$Description, 'REACTOME'), 'Reactome', 'Wiki Pathways')), cis=24)
+cps.cis48 <- cps.cis48 %>% mutate(orig = ifelse(startsWith(cps.cis48$Description, 'KEGG'), 'Kegg', ifelse(startsWith(cps.cis48$Description, 'REACTOME'), 'Reactome', 'Wiki Pathways')), cis=48)
+
+data.frame(cis='6 e 24', term = venn.cps$xy) %>% View()
+cps.list <- c('REACTOME_SELECTIVE_AUTOPHAGY',
+              
+              'REACTOME_P38MAPK_EVENTS',
+              'WP_MAPK_SIGNALING_PATHWAY',
+              'KEGG_MAPK_SIGNALING_PATHWAY',
+              
+              'REACTOME_NEGATIVE_REGULATION_OF_THE_PI3K_AKT_NETWORK',
+              'WP_PI3KAKT_SIGNALING_PATHWAY',
+              
+              'REACTOME_DISEASES_OF_PROGRAMMED_CELL_DEATH'
+              )
+
+
+pdf('../../Figuras/GSEA-CPs.pdf', width = 6.5, height = 4)
+rbind(cps.cis6, cps.cis24) %>% 
+  filter(Description %in% cps.list) %>% 
+  ggplot(aes(factor(cis), reorder(Description, -NES), fill=enrichmentScore))+
+  geom_tile(color='white')+
+  scale_fill_gradient2(low = 'violetred', mid='white', high = 'deepskyblue')+
+  labs(x=NULL, y='Gene set enrichment terms')+
+  scale_x_discrete(labels=c('Cis 6h', 'Cis 24h'))+
+  theme_classic()+
+  theme(axis.text.y = element_text(size=9, color='black'),
+        axis.text.x = element_text(size=12, color='black'))+
+  ggpubr::rotate_x_text(angle=60)
+dev.off()
+```
+
+
+#GO
+```{r}
+cis6.up <- cis6 %>% filter(logFC >= cutoff, adj.P.Val < 0.05)
+cis24.up <- cis24 %>% filter(logFC >= cutoff, adj.P.Val < 0.05)
+cis48.up <- cis48 %>% filter(logFC >= cutoff, adj.P.Val < 0.05)
+
+cis6.down <- cis6 %>% filter(logFC <= -cutoff, adj.P.Val < 0.05)
+cis24.down <- cis24 %>% filter(logFC <= -cutoff, adj.P.Val < 0.05)
+cis48.down <- cis48 %>% filter(logFC <= -cutoff, adj.P.Val < 0.05)
+```
+
+```{r}
+go.cis6.up <- enrichGO(cis6.up$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis6.up <- go.cis6.up@result
+go.cis6.up <- go.cis6.up %>% filter(p.adjust <= 0.05)
+
+go.cis24.up <- enrichGO(cis24.up$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis24.up <- go.cis24.up@result
+go.cis24.up <- go.cis24.up %>% filter(p.adjust <= 0.05)
+
+go.cis48.up <- enrichGO(cis48.up$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis48.up <- go.cis48.up@result
+go.cis48.up <- go.cis48.up %>% filter(p.adjust <= 0.05)
+
+#--down
+go.cis6.down <- enrichGO(cis6.down$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis6.down <- go.cis6.down@result
+go.cis6.down <- go.cis6.down %>% filter(p.adjust <= 0.05)
+
+go.cis24.down <- enrichGO(cis24.down$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis24.down <- go.cis24.down@result
+go.cis24.down <- go.cis24.down %>% filter(p.adjust <= 0.05)
+
+go.cis48.down <- enrichGO(cis48.down$SYMBOL, OrgDb = 'org.Hs.eg.db' , ont = 'all', keyType = 'SYMBOL', pvalueCutoff = 0.05)
+go.cis48.down <- go.cis48.down@result
+go.cis48.down <- go.cis48.down %>% filter(p.adjust <= 0.05)
+
+venn.go <- BioVenn::draw.venn(list_x = go.cis6.down$Description,
+                   list_y = go.cis24.down$Description,
+                   list_z = go.cis48.down$Description)
+venn.go$xy
+
+go.down.list <- c('extrinsic apoptotic signaling pathway',
+                  'extrinsic apoptotic signaling pathway via death domain receptors',
+                  'positive regulation of extrinsic apoptotic signaling pathway',
+                  'cellular response to oxidative stress',
+                  'response to oxidative stres',
+                  'canonical NF-kappaB signal transduction',
+                  'ERK1 and ERK2 cascade',
+                  'regulation of ERK1 and ERK2 cascade',
+                  'SMAD binding',
+                  'renal tubule development',
+                  'kidney morphogenesis',
+                  'renal system development',
+                  'regulation of TOR signaling',
+                  'TOR signaling',
+                  'positive regulation of MAPK cascade',
+                  'p38MAPK cascade',
+                  'regulation of p38MAPK cascade',
+                  'negative regulation of MAPK cascade',
+                  'positive regulation of p38MAPK cascade')
+
+go.cis6.down <- go.cis6.down %>% mutate(cis=6)
+go.cis24.down <- go.cis24.down %>% mutate(cis=24)
+go.cis48.down <- go.cis48.down %>% mutate(cis=48)
+
+rbind(go.cis6.down, go.cis24.down, go.cis48.down) %>% 
+  filter(Description %in% go.down.list) %>% 
+  ggplot(aes(factor(cis), reorder(Description, -FoldEnrichment), fill=FoldEnrichment))+
+  geom_tile(color='black')+
+  scale_fill_gradient2(low = 'firebrick1',mid = 'white', high = 'deepskyblue')
+
+enrichplot::goplot()
+```
+
+24 e 48 down GO apoptose via extrinseca
+

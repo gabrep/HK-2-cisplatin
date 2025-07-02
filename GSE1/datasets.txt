@@ -1,0 +1,4 @@
+gse;detail;time
+GSE246133; animal model of cisplatin
+GSE227970; hk-2 cisplatin 5uM; 48h
+GSE69644; hk-2 cisplatin 50uM; 6-24h

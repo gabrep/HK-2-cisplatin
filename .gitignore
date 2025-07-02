@@ -1,0 +1,10 @@
+.Rhistory
+.RData
+.Rproj.user/
+*.Rproj.user
+*.Ruserdata
+.Rhistory
+.RData
+*.tar
+*.CEL
+.txt
