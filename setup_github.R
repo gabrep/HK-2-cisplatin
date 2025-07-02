@@ -20,7 +20,8 @@ gitignore_content <- c(
   "*.Ruserdata",
   "*.tar",
   "*.cel",
-  "*.txt"
+  "*.txt",
+  '.gz'
 )
 writeLines(gitignore_content, ".gitignore")
 message(".gitignore atualizado com extensões: .tar, .cel, .txt")
