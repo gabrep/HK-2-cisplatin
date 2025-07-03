@@ -22,7 +22,7 @@ look.for <- c('nfkb', 'il1b', 'cit c', 'casp8', 'p-mtor', 'p-akt', 'lc3', 'pink1
 
 #Venn
 ```{r}
-cutoff <- 1
+cutoff <- 1 #cutoff for ORA 
 BioVenn::draw.venn(list_x = filter(cis6, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL,
                    list_y = filter(cis24, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL, 
                    list_z = filter(cis48, adj.P.Val < 0.05, abs(logFC) >= cutoff)$SYMBOL)
@@ -119,9 +119,11 @@ gseaplot()
 ##CPs
 ```{r}
 cps.cis6 <- GSEA(ranks.cis6, TERM2GENE = CPs.symbol)
+cis6.cps <- cps.cis6
 cps.cis6 <- cps.cis6@result
 
 cps.cis24 <- GSEA(ranks.cis24, TERM2GENE = CPs.symbol)
+cis24.cps <- cps.cis24
 cps.cis24 <- cps.cis24@result
 
 cps.cis48 <- GSEA(ranks.cis48, TERM2GENE = CPs.symbol)
@@ -139,6 +141,8 @@ cps.cis48 <- cps.cis48 %>% mutate(orig = ifelse(startsWith(cps.cis48$Description
 data.frame(cis='6 e 24', term = venn.cps$xy) %>% View()
 cps.list <- c('REACTOME_SELECTIVE_AUTOPHAGY',
               
+              'WP_OXIDATIVE_STRESS_RESPONSE',
+              
               'REACTOME_P38MAPK_EVENTS',
               'WP_MAPK_SIGNALING_PATHWAY',
               'KEGG_MAPK_SIGNALING_PATHWAY',
@@ -153,7 +157,7 @@ cps.list <- c('REACTOME_SELECTIVE_AUTOPHAGY',
 pdf('../../Figuras/GSEA-CPs.pdf', width = 6.5, height = 4)
 rbind(cps.cis6, cps.cis24) %>% 
   filter(Description %in% cps.list) %>% 
-  ggplot(aes(factor(cis), reorder(Description, -NES), fill=enrichmentScore))+
+  ggplot(aes(factor(cis), reorder(Description, -NES), fill=NES))+
   geom_tile(color='white')+
   scale_fill_gradient2(low = 'violetred', mid='white', high = 'deepskyblue')+
   labs(x=NULL, y='Gene set enrichment terms')+
@@ -162,6 +166,26 @@ rbind(cps.cis6, cps.cis24) %>%
   theme(axis.text.y = element_text(size=9, color='black'),
         axis.text.x = element_text(size=12, color='black'))+
   ggpubr::rotate_x_text(angle=60)
+dev.off()
+
+#GSEA plots
+
+pdf('../../Figuras/GSEAPlot_cis6.pdf', width = 10, height = 8)
+enrichplot::gseaplot2(cis6.cps, geneSetID = c('REACTOME_SELECTIVE_AUTOPHAGY', #1
+                                              'WP_OXIDATIVE_STRESS_RESPONSE', #3
+                                              'WP_MAPK_SIGNALING_PATHWAY'),
+                      #pvalue_table = TRUE,
+                      title = 'Cisplatin 6h',
+                      color=c('salmon', 'steelblue1', 'green3'))
+dev.off()
+
+pdf('../../Figuras/GSEAPlot_cis24.pdf', width = 10, height = 8)
+enrichplot::gseaplot2(cis24.cps, geneSetID = c('REACTOME_SELECTIVE_AUTOPHAGY', 
+                                              'REACTOME_DISEASES_OF_PROGRAMMED_CELL_DEATH',
+                                              'WP_MAPK_SIGNALING_PATHWAY'),
+                      #pvalue_table = TRUE,
+                      title = 'Cisplatin 24h',
+                      color=c('green3', 'salmon', 'steelblue1'))
 dev.off()
 ```
 

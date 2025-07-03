@@ -153,6 +153,21 @@ down.terms <- c('extrinsic apoptotic signaling pathway', 'regulation of apoptoti
 ```
 
 ```{r}
+#---circle---
+head(cis6)
+head(go.cis.down)
+go.cis.down$geneID <- gsub('/', ', ', go.cis.down$geneID)
+go.cis.up$geneID <- gsub('/', ', ', go.cis.up$geneID)
+
+circle.cis6 <- circle_dat(terms = rbind(go.cis.down, go.cis.up) %>% dplyr::rename(category = ONTOLOGY, term = Description, adj_pval = p.adjust, genes = geneID),
+           genes= cis6 %>% dplyr::rename(ID = SYMBOL) %>% dplyr::select(ID, logFC))
+
+circle.cis24 <- circle_dat(terms = rbind(go.cis.down, go.cis.up) %>% dplyr::rename(category = ONTOLOGY, term = Description, adj_pval = p.adjust, genes = geneID),
+           genes= cis24 %>% dplyr::rename(ID = SYMBOL) %>% dplyr::select(ID, logFC))
+
+```
+
+```{r}
 pdf('../../Figuras/Selected GO.pdf', width = 8, height = 6)
 rbind(go.cis.up, go.cis.down) %>% 
   filter(Description %in% c(down.terms, up.terms)) %>% 
@@ -167,8 +182,11 @@ dev.off()
 ```
 
 ```{r}
-autophagy.terms <- c('macroautophagy', 'autophagosome assembly',
-'apoptotic mitochondrial changes','autophagy of mitochondrion')
+#----autophagy----
+autophagy.terms <- c('macroautophagy', 
+                     'autophagosome assembly', 
+                     #'apoptotic mitochondrial changes', 
+                     'autophagy of mitochondrion')
 geneList <- setNames(cis6.up$logFC, cis6.up$SYMBOL)
 
 pdf('../../Figuras/Heatplot-termsGenes.pdf', width = 10, height = 2.5)
@@ -178,13 +196,15 @@ enrichplot::heatplot(go.up[go.up$Description %in% autophagy.terms, asis=T],
   theme_minimal()+
   theme(axis.text.x = element_text(size=7),
         axis.text.y = element_text(size=10))+
-  ggpubr::rotate_x_text(angle=90)
+  ggpubr::rotate_x_text(angle=45)
 dev.off()
 
-
-enrichplot::dotplot(go.up, showCategory = 10)
-enrichplot::dotplot(go.down, showCategory = 5)
-
+pdf('../../Figuras/GOCircle_6hfull.pdf', width = 8, height = 4)
+GOCircle(circle.cis6, nsub = autophagy.terms, title = 'Cisplatin 6h')
+dev.off()
+pdf('../../Figuras/GOCircle_24h.pdf', width = 4, height = 4)
+GOCircle(circle.cis24, nsub = autophagy.terms, title = 'Cisplatin 24h', table.legend = F)
+dev.off()
 
 look.for
 genes.go <- go.cis.up %>% filter(Description %in% autophagy.terms)
